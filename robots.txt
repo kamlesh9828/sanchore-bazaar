@@ -1,5 +1,3 @@
-
 User-agent: *
 Allow: /
-
 Sitemap: https://sanchorebazaar.bg5.net/sitemap.xml
