@@ -49,6 +49,12 @@ footer{margin-top:34px;background:#102f22;color:#e8f3eb;padding:34px 0 20px}.foo
 <div class="field"><label for="email">Email address</label><input id="email" type="email" required autocomplete="email" placeholder="you@example.com"></div>
 <div class="field"><label for="password">Password</label><input id="password" type="password" required minlength="8" autocomplete="current-password" placeholder="At least 8 characters"></div>
 <div class="field hidden" id="confirmField"><label for="confirmPassword">Confirm password</label><input id="confirmPassword" type="password" minlength="8" placeholder="Re-enter password"></div>
+<div id="otpInline" class="hidden" style="border:1px solid #cbded0;background:#f5faf6;border-radius:12px;padding:14px;margin:14px 0">
+ <strong>ईमेल OTP सत्यापन</strong><p id="otpHelp" style="margin:5px 0 10px">आपके ईमेल पर 6 अंकों का OTP भेजा गया है।</p>
+ <div class="field" style="margin:8px 0"><label for="registrationOtp">6 अंकों का OTP</label><input id="registrationOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="OTP डालें"></div>
+ <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><span id="otpCountdown" class="muted">Resend OTP 60s</span><button class="softbtn" id="resendOtp" type="button" disabled>Resend OTP</button></div>
+ <button class="btn full" id="verifyOtpBtn" type="button">OTP Verify करें</button>
+</div>
 <button class="btn full" id="authSubmit" type="submit">Login</button></form>
 <div class="switch" style="display:grid;gap:8px;margin-top:12px"><button class="softbtn" id="googleLogin" type="button">Google से जारी रखें</button><button class="softbtn" id="appleLogin" style="display:none" type="button">Apple से जारी रखें</button></div>
 <div class="switch" id="authSwitch">New customer? <a href="#" id="showSignup">Create account</a></div><div class="switch" id="forgotLine"><a href="#" id="forgotBtn">Forgot password?</a></div>
@@ -62,7 +68,7 @@ footer{margin-top:34px;background:#102f22;color:#e8f3eb;padding:34px 0 20px}.foo
 <script>
 // Sanchore Bazaar website: same Firebase project and Firestore collections as Android app.
 const firebaseConfig = {
-  apiKey: "AIzaSyAZEBjbfX2E4PG7WY6SJKM6uIwRZe8b3os",
+  apiKey: "AIzaSyCtsKjTt1EH9KHNkOhNoRpTHwjFY_uTMCE",
   authDomain: "sanchore-bazaar.firebaseapp.com",
   projectId: "sanchore-bazaar",
   storageBucket: "sanchore-bazaar.firebasestorage.app",
@@ -89,7 +95,7 @@ async function loadProducts(){
  catch(e){$("resultCount").textContent="Products load नहीं हुए";$("productGrid").innerHTML='<p class="muted">Firebase से प्रोडक्ट नहीं मिल पाए। Firestore Rules और इंटरनेट कनेक्शन जाँचें।</p>';console.error(e)}
 }
 function authNotice(t){$("authNotice").textContent=t;$("authNotice").classList.add("show")}
-function showAuth(m="login"){$("authModal").classList.add("show");mode=m;$("authNotice").classList.remove("show");$("authTitle").textContent=m==="signup"?"Create Customer Account":m==="reset"?"Reset Password":"Customer Login";$("authSub").textContent=m==="signup"?"नाम, मोबाइल और पासवर्ड से ग्राहक खाता बनाएँ। ईमेल OTP सत्यापन जरूरी है।":m==="reset"?"ईमेल पर पासवर्ड रीसेट लिंक भेजा जाएगा।":"अपने Firebase खाते से लॉगिन करें।";["nameField","phoneField","confirmField"].forEach(x=>$(x).classList.toggle("hidden",m!=="signup"));$("authSubmit").textContent=m==="signup"?"Create Account":m==="reset"?"Send Reset Link":"Login";$("authSwitch").classList.toggle("hidden",m==="reset");$("forgotLine").classList.toggle("hidden",m!=="login")}
+function showAuth(m="login"){$("authModal").classList.add("show");mode=m;$("authNotice").classList.remove("show");$("authTitle").textContent=m==="signup"?"Create Customer Account":m==="reset"?"Reset Password":"Customer Login";$("authSub").textContent=m==="signup"?"नाम, मोबाइल और पासवर्ड से ग्राहक खाता बनाएँ। ईमेल OTP सत्यापन जरूरी है।":m==="reset"?"ईमेल पर पासवर्ड रीसेट लिंक भेजा जाएगा।":"अपने Firebase खाते से लॉगिन करें।";["nameField","phoneField","confirmField"].forEach(x=>$(x).classList.toggle("hidden",m!=="signup"));$("authSubmit").textContent=m==="signup"?"Create Account":m==="reset"?"Send Reset Link":"Login";if(m!=="signup"){$("otpInline").classList.add("hidden");$("authSubmit").classList.remove("hidden");}else restorePendingOtp();$("authSwitch").classList.toggle("hidden",m==="reset");$("forgotLine").classList.toggle("hidden",m!=="login")}
 function closeAuth(){$("authModal").classList.remove("show")}
 async function workerPost(path,body,token){
  const protectedPath=["/api/registerCustomerProfile","/api/applyStaffRegistration","/api/createOrder"].includes(path)||!path.startsWith("/api/")?true:!["/api/checkRegistrationPhone","/api/sendRegistrationOtp","/api/verifyRegistrationOtp"].includes(path);
@@ -100,18 +106,33 @@ async function workerPost(path,body,token){
  if(!r.ok||data.success===false){const message=data.error||data.message||`Server error ${r.status}`;if(r.status===401&&/login required/i.test(message))throw new Error("Cloudflare Worker को Firebase Authorization token नहीं मिला। वेबसाइट और Worker का नया संस्करण deploy करें; फिर से लॉगिन करके प्रयास करें।");throw new Error(message)}
  return data;
 }
+let otpTimer=null, pendingSignup=null;
+const OTP_STORAGE_KEY="sb_pending_registration_otp_v1";
+function readPendingOtp(){try{return JSON.parse(localStorage.getItem(OTP_STORAGE_KEY)||"null")}catch(_){return null}}
+function setOtpCountdown(){if(otpTimer)clearInterval(otpTimer);const tick=()=>{const p=readPendingOtp();if(!p){$("otpCountdown").textContent="";$("resendOtp").disabled=true;return}const left=Math.max(0,Math.ceil((p.resendAt-Date.now())/1000));$("otpCountdown").textContent=left>0?`Resend OTP ${left}s`:"अब OTP दोबारा भेज सकते हैं";$("resendOtp").disabled=left>0};tick();otpTimer=setInterval(tick,1000)}
+function showInlineOtp(p){pendingSignup=p;$("otpInline").classList.remove("hidden");$("authSubmit").classList.add("hidden");$("otpHelp").textContent=`${p.email} पर 6 अंकों का OTP भेजा गया है। इस पेज से बाहर जाने पर भी यह चरण सुरक्षित रहेगा।`;setOtpCountdown()}
+function clearPendingOtp(){localStorage.removeItem(OTP_STORAGE_KEY);pendingSignup=null;if(otpTimer)clearInterval(otpTimer);$("otpInline").classList.add("hidden");$("authSubmit").classList.remove("hidden")}
+function restorePendingOtp(){const p=readPendingOtp();if(p&&p.email){$("email").value=p.email;$("fullName").value=p.name||"";$("mobile").value=p.mobile||"";showInlineOtp(p)}}
+$("resendOtp").onclick=async()=>{const p=readPendingOtp();if(!p||Date.now()<p.resendAt)return;const b=$("resendOtp");b.disabled=true;try{await workerPost("/api/sendRegistrationOtp",{email:p.email});p.resendAt=Date.now()+60000;localStorage.setItem(OTP_STORAGE_KEY,JSON.stringify(p));authNotice("नया OTP भेजने का अनुरोध हो गया है।");setOtpCountdown()}catch(e){authNotice("OTP दोबारा नहीं भेजा जा सका: "+e.message);b.disabled=false}};
+$("verifyOtpBtn").onclick=async()=>{const p=readPendingOtp(),code=$("registrationOtp").value.trim(),b=$("verifyOtpBtn");if(!p)return;if(!/^\d{6}$/.test(code)){authNotice("सही 6 अंकों का OTP डालें।");return}b.disabled=true;try{await workerPost("/api/verifyRegistrationOtp",{email:p.email,otp:code});p.verified=true;localStorage.setItem(OTP_STORAGE_KEY,JSON.stringify(p));$("authForm").requestSubmit()}catch(e){authNotice("OTP सत्यापन नहीं हुआ: "+e.message)}finally{b.disabled=false}};
 $("accountBtn").onclick=$("heroAccount").onclick=$("footerAccount").onclick=()=>showAuth("login");$("closeAuth").onclick=closeAuth;
-$("showSignup").onclick=e=>{e.preventDefault();showAuth("signup")};$("forgotBtn").onclick=e=>{e.preventDefault();showAuth("reset")};
+$("showSignup").onclick=e=>{e.preventDefault();showAuth("signup");restorePendingOtp()};$("forgotBtn").onclick=e=>{e.preventDefault();showAuth("reset")};
 $("authForm").onsubmit=async e=>{e.preventDefault();const email=$("email").value.trim().toLowerCase(),password=$("password").value,fullName=$("fullName").value.trim(),mobile=$("mobile").value.trim();const btn=$("authSubmit");btn.disabled=true;
  try{
   if(mode==="signup"){
    if(fullName.length<2||!/^\d{10}$/.test(mobile))throw new Error("पूरा नाम और 10 अंकों का मोबाइल नंबर डालें।");
    if(password!==$("confirmPassword").value||password.length<8)throw new Error("पासवर्ड कम से कम 8 अक्षर का हो और दोनों पासवर्ड समान हों।");
-   await workerPost("/api/checkRegistrationPhone",{phone:mobile,email});
-   await workerPost("/api/sendRegistrationOtp",{email});
-   const otp=window.prompt("आपके ईमेल पर भेजा गया 6 अंकों का OTP डालें:");
-   if(!otp||!/^\d{6}$/.test(otp.trim()))throw new Error("सही 6 अंकों का OTP डालना जरूरी है।");
-   await workerPost("/api/verifyRegistrationOtp",{email,otp:otp.trim()});
+   const pending=readPendingOtp();
+   if(!pending||pending.email!==email||!pending.verified){
+    if(!pending||pending.email!==email){
+     await workerPost("/api/checkRegistrationPhone",{phone:mobile,email});
+     await workerPost("/api/sendRegistrationOtp",{email});
+     const next={email,name:fullName,mobile,resendAt:Date.now()+60000,verified:false};
+     localStorage.setItem(OTP_STORAGE_KEY,JSON.stringify(next));showInlineOtp(next);authNotice("OTP भेजने का अनुरोध हो गया है। नीचे OTP डालें।");
+    } else {showInlineOtp(pending);authNotice("नीचे OTP verify करें।")}
+    return;
+   }
+   if(pending.mobile!==mobile||pending.name!==fullName)throw new Error("OTP के लिए इस्तेमाल की गई जानकारी बदल गई है। OTP दोबारा भेजें।");
    const credential=await auth.createUserWithEmailAndPassword(email,password);
    try{
     await credential.user.reload();
@@ -127,7 +148,7 @@ $("authForm").onsubmit=async e=>{e.preventDefault();const email=$("email").value
     await auth.signOut();
     throw new Error("प्रोफाइल सेव नहीं हुई: "+profileError.message+cleanupMessage);
    }
-   authNotice("आपका ग्राहक खाता बन गया है।");setTimeout(closeAuth,1200);
+   clearPendingOtp();authNotice("आपका ग्राहक खाता बन गया है।");setTimeout(closeAuth,1200);
   } else if(mode==="reset") {await auth.sendPasswordResetEmail(email);authNotice("पासवर्ड रीसेट लिंक ईमेल पर भेज दिया गया है।")}
   else {await auth.signInWithEmailAndPassword(email,password);authNotice("Login सफल रहा।");setTimeout(closeAuth,700)}
  }catch(err){authNotice(err.message||"कुछ गलत हुआ। फिर प्रयास करें।")}finally{btn.disabled=false}
