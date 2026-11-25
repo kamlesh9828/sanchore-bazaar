@@ -45,11 +45,12 @@ footer{margin-top:34px;background:#102f22;color:#e8f3eb;padding:34px 0 20px}.foo
 <div class="modal" id="authModal"><div class="panel"><button class="close" id="closeAuth">×</button><h2 id="authTitle">Customer Login</h2><p id="authSub">Login to continue shopping.</p><div class="notice" id="authNotice"></div>
 <form id="authForm">
 <div class="field hidden" id="nameField"><label for="fullName">Full name</label><input id="fullName" autocomplete="name" placeholder="Enter your name"></div>
-<div class="field hidden" id="phoneField"><label for="mobile">Mobile number (no OTP)</label><input id="mobile" inputmode="tel" autocomplete="tel" placeholder="10-digit mobile number"></div>
+<div class="field hidden" id="phoneField"><label for="mobile">Mobile number (email OTP verification)</label><input id="mobile" inputmode="tel" autocomplete="tel" placeholder="10-digit mobile number"></div>
 <div class="field"><label for="email">Email address</label><input id="email" type="email" required autocomplete="email" placeholder="you@example.com"></div>
 <div class="field"><label for="password">Password</label><input id="password" type="password" required minlength="8" autocomplete="current-password" placeholder="At least 8 characters"></div>
 <div class="field hidden" id="confirmField"><label for="confirmPassword">Confirm password</label><input id="confirmPassword" type="password" minlength="8" placeholder="Re-enter password"></div>
 <button class="btn full" id="authSubmit" type="submit">Login</button></form>
+<div class="switch" style="display:grid;gap:8px;margin-top:12px"><button class="softbtn" id="googleLogin" type="button">Google से जारी रखें</button><button class="softbtn" id="appleLogin" style="display:none" type="button">Apple से जारी रखें</button></div>
 <div class="switch" id="authSwitch">New customer? <a href="#" id="showSignup">Create account</a></div><div class="switch" id="forgotLine"><a href="#" id="forgotBtn">Forgot password?</a></div>
 </div></div>
 <aside class="drawer" id="cartDrawer"><div class="drawer-head"><h2>Your Cart</h2><button class="softbtn" id="closeCart">Close</button></div><div id="cartItems"></div><div id="cartFooter"></div></aside>
@@ -61,7 +62,7 @@ footer{margin-top:34px;background:#102f22;color:#e8f3eb;padding:34px 0 20px}.foo
 <script>
 // Sanchore Bazaar website: same Firebase project and Firestore collections as Android app.
 const firebaseConfig = {
-  apiKey: "AIzaSyAZEBjbfX2E4PGWY6SJKM6uIwRZe8b3os",
+  apiKey: "AIzaSyAZEBjbfX2E4PG7WY6SJKM6uIwRZe8b3os",
   authDomain: "sanchore-bazaar.firebaseapp.com",
   projectId: "sanchore-bazaar",
   storageBucket: "sanchore-bazaar.firebasestorage.app",
@@ -88,9 +89,17 @@ async function loadProducts(){
  catch(e){$("resultCount").textContent="Products load नहीं हुए";$("productGrid").innerHTML='<p class="muted">Firebase से प्रोडक्ट नहीं मिल पाए। Firestore Rules और इंटरनेट कनेक्शन जाँचें।</p>';console.error(e)}
 }
 function authNotice(t){$("authNotice").textContent=t;$("authNotice").classList.add("show")}
-function showAuth(m="login"){$("authModal").classList.add("show");mode=m;$("authNotice").classList.remove("show");$("authTitle").textContent=m==="signup"?"Create Customer Account":m==="reset"?"Reset Password":"Customer Login";$("authSub").textContent=m==="signup"?"ईमेल OTP सत्यापन के बाद ग्राहक खाता बनेगा।":m==="reset"?"ईमेल पर पासवर्ड रीसेट लिंक भेजा जाएगा।":"अपने Firebase खाते से लॉगिन करें।";["nameField","phoneField","confirmField"].forEach(x=>$(x).classList.toggle("hidden",m!=="signup"));$("authSubmit").textContent=m==="signup"?"Register & Verify Email":m==="reset"?"Send Reset Link":"Login";$("authSwitch").classList.toggle("hidden",m==="reset");$("forgotLine").classList.toggle("hidden",m!=="login")}
+function showAuth(m="login"){$("authModal").classList.add("show");mode=m;$("authNotice").classList.remove("show");$("authTitle").textContent=m==="signup"?"Create Customer Account":m==="reset"?"Reset Password":"Customer Login";$("authSub").textContent=m==="signup"?"नाम, मोबाइल और पासवर्ड से ग्राहक खाता बनाएँ। ईमेल OTP सत्यापन जरूरी है।":m==="reset"?"ईमेल पर पासवर्ड रीसेट लिंक भेजा जाएगा।":"अपने Firebase खाते से लॉगिन करें।";["nameField","phoneField","confirmField"].forEach(x=>$(x).classList.toggle("hidden",m!=="signup"));$("authSubmit").textContent=m==="signup"?"Create Account":m==="reset"?"Send Reset Link":"Login";$("authSwitch").classList.toggle("hidden",m==="reset");$("forgotLine").classList.toggle("hidden",m!=="login")}
 function closeAuth(){$("authModal").classList.remove("show")}
-async function workerPost(path,body,token){const r=await fetch(WORKER_BASE+path,{method:"POST",headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})},body:JSON.stringify(body)});const data=await r.json().catch(()=>({}));if(!r.ok||data.success===false)throw new Error(data.error||data.message||`Server error ${r.status}`);return data}
+async function workerPost(path,body,token){
+ const protectedPath=["/api/registerCustomerProfile","/api/applyStaffRegistration","/api/createOrder"].includes(path)||!path.startsWith("/api/")?true:!["/api/checkRegistrationPhone","/api/sendRegistrationOtp","/api/verifyRegistrationOtp"].includes(path);
+ if(protectedPath&&(!token||!String(token).trim()))throw new Error("Firebase login token नहीं मिला; पहले लॉगिन करें और फिर प्रयास करें।");
+ const headers={"Content-Type":"application/json"};if(token)headers.Authorization="Bearer "+token;
+ const r=await fetch(WORKER_BASE+path,{method:"POST",headers,body:JSON.stringify(body)});
+ const data=await r.json().catch(()=>({}));
+ if(!r.ok||data.success===false){const message=data.error||data.message||`Server error ${r.status}`;if(r.status===401&&/login required/i.test(message))throw new Error("Cloudflare Worker को Firebase Authorization token नहीं मिला। वेबसाइट और Worker का नया संस्करण deploy करें; फिर से लॉगिन करके प्रयास करें।");throw new Error(message)}
+ return data;
+}
 $("accountBtn").onclick=$("heroAccount").onclick=$("footerAccount").onclick=()=>showAuth("login");$("closeAuth").onclick=closeAuth;
 $("showSignup").onclick=e=>{e.preventDefault();showAuth("signup")};$("forgotBtn").onclick=e=>{e.preventDefault();showAuth("reset")};
 $("authForm").onsubmit=async e=>{e.preventDefault();const email=$("email").value.trim().toLowerCase(),password=$("password").value,fullName=$("fullName").value.trim(),mobile=$("mobile").value.trim();const btn=$("authSubmit");btn.disabled=true;
@@ -98,19 +107,86 @@ $("authForm").onsubmit=async e=>{e.preventDefault();const email=$("email").value
   if(mode==="signup"){
    if(fullName.length<2||!/^\d{10}$/.test(mobile))throw new Error("पूरा नाम और 10 अंकों का मोबाइल नंबर डालें।");
    if(password!==$("confirmPassword").value||password.length<8)throw new Error("पासवर्ड कम से कम 8 अक्षर का हो और दोनों पासवर्ड समान हों।");
-   await workerPost("/api/auth/sendRegistrationOtp",{email});
-   const otp=window.prompt("आपके ईमेल पर 6 अंकों का OTP भेजा है। OTP डालें:");
-   if(!otp)throw new Error("OTP सत्यापन रद्द किया गया।");
-   await workerPost("/api/auth/verifyRegistrationOtp",{email,otp:otp.trim()});
+   await workerPost("/api/checkRegistrationPhone",{phone:mobile,email});
+   await workerPost("/api/sendRegistrationOtp",{email});
+   const otp=window.prompt("आपके ईमेल पर भेजा गया 6 अंकों का OTP डालें:");
+   if(!otp||!/^\d{6}$/.test(otp.trim()))throw new Error("सही 6 अंकों का OTP डालना जरूरी है।");
+   await workerPost("/api/verifyRegistrationOtp",{email,otp:otp.trim()});
    const credential=await auth.createUserWithEmailAndPassword(email,password);
-   try{const token=await credential.user.getIdToken();await workerPost("/api/registerCustomerProfile",{name:fullName,phone:mobile,email},token)}catch(profileError){await auth.signOut();throw new Error("खाता बन गया, लेकिन प्रोफाइल पूरा नहीं हुआ: "+profileError.message+" कृपया सहायता से संपर्क करें।")}
-   authNotice("ईमेल सत्यापित। आपका ग्राहक खाता बन गया है।");setTimeout(closeAuth,1200);
+   try{
+    await credential.user.reload();
+    const activeUser=auth.currentUser;
+    if(!activeUser||activeUser.uid!==credential.user.uid)throw new Error("Firebase login session नहीं मिला। फिर से लॉगिन करके प्रयास करें।");
+    const token=await activeUser.getIdToken(true);
+    if(!token)throw new Error("Firebase ID token नहीं मिला। फिर से लॉगिन करके प्रयास करें।");
+    await workerPost("/api/registerCustomerProfile",{name:fullName,phone:mobile,email},token);
+   }catch(profileError){
+    let cleanupMessage="";
+    try{const activeUser=auth.currentUser;if(activeUser&&activeUser.uid===credential.user.uid)await activeUser.delete();}
+    catch(cleanupError){cleanupMessage=" Firebase खाता बना रह गया है; उसी ईमेल से दोबारा रजिस्ट्रेशन न करें, सहायता से संपर्क करें।";}
+    await auth.signOut();
+    throw new Error("प्रोफाइल सेव नहीं हुई: "+profileError.message+cleanupMessage);
+   }
+   authNotice("आपका ग्राहक खाता बन गया है।");setTimeout(closeAuth,1200);
   } else if(mode==="reset") {await auth.sendPasswordResetEmail(email);authNotice("पासवर्ड रीसेट लिंक ईमेल पर भेज दिया गया है।")}
   else {await auth.signInWithEmailAndPassword(email,password);authNotice("Login सफल रहा।");setTimeout(closeAuth,700)}
  }catch(err){authNotice(err.message||"कुछ गलत हुआ। फिर प्रयास करें।")}finally{btn.disabled=false}
 };
+async function socialLogin(providerName){
+ const btn=providerName==="google"?$("googleLogin"):$("appleLogin");btn.disabled=true;
+ try{
+  if(providerName!=="google")throw new Error("Apple Login अभी बंद है।");
+  const provider=new firebase.auth.GoogleAuthProvider();
+  const result=await auth.signInWithPopup(provider);const user=result.user;
+  const ref=db.collection("users").doc(user.uid);let snap=await ref.get();
+  if(!snap.exists){
+   const fullName=window.prompt("अपना पूरा नाम डालें:")||"";const mobile=window.prompt("10 अंकों का मोबाइल नंबर डालें:")||"";
+   if(fullName.trim().length<2||!/^\d{10}$/.test(mobile.trim())){await auth.signOut();throw new Error("प्रोफाइल बनाने के लिए सही नाम और 10 अंकों का मोबाइल जरूरी है।");}
+   await workerPost("/api/checkRegistrationPhone",{phone:mobile.trim(),email:user.email});
+   const token=await user.getIdToken(true);
+   if(!token)throw new Error("Firebase ID token नहीं मिला। दोबारा लॉगिन करें।");
+   await workerPost("/api/registerCustomerProfile",{name:fullName.trim(),phone:mobile.trim(),email:user.email},token);
+   snap=await ref.get();
+  }
+  if(!snap.exists)throw new Error("ग्राहक प्रोफाइल नहीं मिली।");
+  authNotice("Login सफल रहा।");setTimeout(closeAuth,700);
+ }catch(e){authNotice(e.message||"Social login पूरा नहीं हुआ।");}
+ finally{btn.disabled=false;}
+}
+$("googleLogin").onclick=()=>socialLogin("google");$("appleLogin").onclick=()=>socialLogin("apple");
 auth.onAuthStateChanged(user=>{const b=$("accountBtn");if(b)b.innerHTML=user?"👤 <span>My Account</span>":"👤 <span>Account</span>"});
-function renderCart(){let box=$("cartItems");if(!cart.length){box.innerHTML='<div class="empty">🛒<br>Your cart is empty.</div>';$("cartFooter").innerHTML="";return}box.innerHTML=cart.map(x=>{let p=products.find(p=>p.id===x.id);if(!p)return "";return `<div class="cart-row"><div class="pic">${productEmoji(p)}</div><div class="grow"><b>${p.name}</b><div>${money(p.price)}</div><div class="qty"><button data-dec="${p.id}">−</button>${x.qty}<button data-inc="${p.id}">+</button><button data-remove="${p.id}" style="margin-left:auto">Remove</button></div></div></div>`}).join("");let total=cart.reduce((s,x)=>s+(Number(products.find(p=>p.id===x.id)?.price)||0)*x.qty,0);$("cartFooter").innerHTML=`<h3>Total: ${money(total)}</h3><button class="btn full" id="checkoutBtn">Proceed to Checkout</button><p class="muted" style="font-size:12px">ऑर्डर और भुगतान सुरक्षित Worker checkout से जोड़ने का काम अगला चरण है। अभी यह बटन लाइव ऑर्डर नहीं बनाता।</p>`;$("checkoutBtn").onclick=()=>{showAuth("login");authNotice("ऑर्डर देने की सुविधा लाइव करने से पहले सुरक्षित checkout API जोड़ना बाकी है।")}}
+let activePaytmOrderId="", activePaytmWindow=null;
+async function browserLocation(){return new Promise(resolve=>{if(!navigator.geolocation)return resolve(null);navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude}),()=>resolve(null),{enableHighAccuracy:true,timeout:8000,maximumAge:60000})})}
+async function startWebsiteCheckout(){
+ const user=auth.currentUser;
+ if(!user){showAuth("login");authNotice("ऑर्डर देने के लिए पहले लॉगिन करें।");return}
+ const grouped=new Map();
+ for(const line of cart){const p=products.find(x=>x.id===line.id);if(!p||!p.shopId)throw new Error("कार्ट में किसी सामान की दुकान की जानकारी नहीं मिली।");if(!grouped.has(p.shopId))grouped.set(p.shopId,[]);grouped.get(p.shopId).push({productId:p.id,quantity:line.qty})}
+ const address=window.prompt("पूरा डिलीवरी पता और मकान/गली नंबर लिखें:");if(!address||address.trim().length<8)return;
+ const pinCode=window.prompt("डिलीवरी PIN code (6 अंक) लिखें:")||"";if(pinCode&&!/^\d{6}$/.test(pinCode.trim()))throw new Error("सही 6 अंकों का PIN code डालें।");
+ const profile=await db.collection("users").doc(user.uid).get();const data=profile.exists?profile.data():{};
+ const customerName=window.prompt("ग्राहक का नाम:",data.name||user.displayName||"")||"";
+ const customerPhone=window.prompt("10 अंकों का मोबाइल नंबर:",data.phone||"")||"";
+ if(customerName.trim().length<2||!/^\d{10}$/.test(customerPhone.trim()))throw new Error("सही नाम और 10 अंकों का मोबाइल नंबर जरूरी है।");
+ const paytm=window.confirm("Online Paytm से भुगतान करना है?\nOK = Paytm Online\nCancel = Cash on Delivery");
+ const payWindow=paytm?window.open("about:blank","_blank"):null;
+ if(paytm&&!payWindow)throw new Error("Paytm विंडो ब्राउज़र ने रोक दी। Pop-up अनुमति दें और फिर प्रयास करें।");
+ try{
+  const loc=await browserLocation();
+  const result=await workerPost("/api/createOrder",{groups:Array.from(grouped,([shopId,items])=>({shopId,items})),address:address.trim(),pinCode:pinCode.trim(),customerName:customerName.trim(),customerPhone:customerPhone.trim(),...(loc||{}),paymentMethod:paytm?"paytm":"cod"},await user.getIdToken());
+  if(paytm){
+   activePaytmOrderId=result.paymentSessionId;
+   if(!activePaytmOrderId)throw new Error("Paytm payment session नहीं मिला।");
+   const init=await workerPost("/api/paytm/initiate",{sessionId:activePaytmOrderId},await user.getIdToken());
+   payWindow.location.href=init.checkoutUrl;activePaytmWindow=payWindow;
+   authNotice("Paytm भुगतान विंडो खुल गई है। भुगतान पूरा करें; स्थिति अपने आप जाँची जाएगी।");
+  }else{
+   cart=[];save();renderCart();$("cartDrawer").classList.remove("show");alert("ऑर्डर सफलतापूर्वक दर्ज हो गया। ऑर्डर ID: "+(result.orders||[]).map(x=>x.orderId).join(", "));
+  }
+ }catch(err){if(payWindow&&!payWindow.closed)payWindow.close();throw err}
+}
+window.addEventListener("message",async event=>{const d=event.data;if(event.origin!==new URL(WORKER_BASE).origin||!d||d.source!=="sanchore-paytm"||d.value!=="VERIFY"||!activePaytmOrderId)return;try{const result=await workerPost("/api/paytm/verify",{orderId:activePaytmOrderId},await auth.currentUser.getIdToken());if(result.paid){cart=[];save();renderCart();$("cartDrawer").classList.remove("show");alert("भुगतान सफल! आपका ऑर्डर कन्फर्म हो गया।")}else alert("भुगतान अभी कन्फर्म नहीं हुआ। स्थिति: "+(result.paymentStatus||"pending"));}catch(e){alert("भुगतान की स्थिति जाँच नहीं सकी: "+e.message)}finally{activePaytmOrderId="";activePaytmWindow=null}});
+function renderCart(){let box=$("cartItems");if(!cart.length){box.innerHTML='<div class="empty">🛒<br>Your cart is empty.</div>';$("cartFooter").innerHTML="";return}box.innerHTML=cart.map(x=>{let p=products.find(p=>p.id===x.id);if(!p)return "";return `<div class="cart-row"><div class="pic">${productEmoji(p)}</div><div class="grow"><b>${p.name}</b><div>${money(p.price)}</div><div class="qty"><button data-dec="${p.id}">−</button>${x.qty}<button data-inc="${p.id}">+</button><button data-remove="${p.id}" style="margin-left:auto">Remove</button></div></div></div>`}).join("");let total=cart.reduce((s,x)=>s+(Number(products.find(p=>p.id===x.id)?.price)||0)*x.qty,0);$("cartFooter").innerHTML=`<h3>Total: ${money(total)}</h3><button class="btn full" id="checkoutBtn">Proceed to Secure Checkout</button><p class="muted" style="font-size:12px">ऑर्डर सर्वर पर स्टॉक, डिलीवरी क्षेत्र और भुगतान की जाँच के बाद बनेगा।</p>`;$("checkoutBtn").onclick=async()=>{const b=$("checkoutBtn");b.disabled=true;try{await startWebsiteCheckout()}catch(e){alert(e.message||"Checkout पूरा नहीं हुआ।")}finally{if(b)b.disabled=false}}}
 function renderWishlist(){let box=$("wishlistItems");box.innerHTML=wishlist.length?wishlist.map(id=>{let p=products.find(x=>x.id===id);if(!p)return "";return `<div class="cart-row"><div class="pic">${productEmoji(p)}</div><div class="grow"><b>${p.name}</b><div>${money(p.price)}</div><button class="softbtn" data-add="${p.id}">Add to Cart</button> <button class="softbtn" data-unwish="${p.id}">Remove</button></div></div>`}).join(""):'<div class="empty">♡<br>Your wishlist is empty.</div>'}
 $("productGrid").addEventListener("click",e=>{let add=e.target.closest("[data-add]"),buy=e.target.closest("[data-buy]"),wish=e.target.closest("[data-wish]");if(add||buy){let id=(add||buy).dataset.add||buy.dataset.buy,item=cart.find(x=>x.id===id);item?item.qty++:cart.push({id,qty:1});save();if(buy){$("cartDrawer").classList.add("show");renderCart()}}if(wish){let id=wish.dataset.wish;wishlist.includes(id)?wishlist=wishlist.filter(x=>x!==id):wishlist.push(id);save();renderProducts($("searchInput").value)}});
 document.addEventListener("click",e=>{let d=e.target.closest("[data-dec]"),i=e.target.closest("[data-inc]"),r=e.target.closest("[data-remove]"),u=e.target.closest("[data-unwish]");if(d){let x=cart.find(x=>x.id===d.dataset.dec);x.qty=Math.max(1,x.qty-1);renderCart();save()}if(i){cart.find(x=>x.id===i.dataset.inc).qty++;renderCart();save()}if(r){cart=cart.filter(x=>x.id!==r.dataset.remove);renderCart();save()}if(u){wishlist=wishlist.filter(x=>x!==u.dataset.unwish);save();renderWishlist()}});
